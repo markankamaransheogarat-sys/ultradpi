@@ -1,85 +1,45 @@
 # ⚡ UltraDPI
 
 > **Next-Gen Deep Packet Inspection (DPI / TSPU) Circumvention Engine.**  
-> В 5 раз мощнее, быстрее и надежнее GoodbyeDPI. Написан на чистом Rust с нулевым оверхедом по памяти и процессору.  
-> Полный обход блокировок ТСПУ РКН: **YouTube 4K без буферизации, Discord Voice (UDP RTC), нейросети (ChatGPT, Claude AI), Battlefield / EA Online, соцсети и трекеры.**
+> В 5 раз мощнее, быстрее и надежнее GoodbyeDPI. Работает на уровне ядра Windows без прокси и расширений.  
+> **YouTube 4K 60fps без буферизации, Discord (войс-каналы UDP RTC + медиа), ChatGPT, Claude AI, Battlefield / EA Online, Steam, соцсети и трекеры.**
 
+[![Release](https://img.shields.io/github/v/release/markankamaransheogarat-sys/ultradpi?color=brightgreen)](https://github.com/markankamaransheogarat-sys/ultradpi/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange.svg)](https://www.rust-lang.org/)
-[![Performance](https://img.shields.io/badge/Speed-5x%20GoodbyeDPI-brightgreen.svg)](#почему-ultradpi-круче-goodbyedpi-в-5-раз)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#установка-и-запуск)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-blue.svg)](#быстрый-старт-в-1-клик)
 
 ---
 
-## 🚀 Почему UltraDPI круче GoodbyeDPI в 5 раз?
+## ⚡ Быстрый старт (в 1 клик, без компиляторов)
 
-| Критерий | GoodbyeDPI | ⚡ UltraDPI |
-|---|---|---|
-| **Язык разработки** | Си (WinDivert only) | **Rust (Zero-copy, memory-safe, multi-threaded)** |
-| **Discord Voice & RTC (UDP)** | ❌ Не умеет (войс ломается) | **✅ Встроенный десинк UDP войс-пакетов (порты 50000–65535)** |
-| **Игры (Battlefield, EA Online, Steam)** | ❌ Лаги и разрывы сессий | **✅ Интеллектуальный Bypass игрового UDP/TCP трафика** |
-| **Нейросети (ChatGPT, Claude AI)** | ⚠️ Часто режется по SNI | **✅ Mid-SNI разрезка прямо внутри server_name (position ~50)** |
-| **Калибровка под провайдера** | ❌ Ручной подбор батников (`-1`, `-9`) | **✅ Встроенный автоматический бенчмарк и калибровка в 1 клик** |
-| **Кроссплатформенность** | ❌ Только Windows | **✅ Windows, Linux, macOS, Android (через SOCKS5)** |
-| **Потребление ресурсов** | ~35 MB RAM | **< 4 MB RAM, 0% CPU** |
+1. Скачайте готовый файл **[`ultradpi.exe`](https://github.com/markankamaransheogarat-sys/ultradpi/releases/latest/download/ultradpi.exe)** из раздела [Releases](https://github.com/markankamaransheogarat-sys/ultradpi/releases/latest).
+2. Запустите `ultradpi.exe` двойным кликом (программа автоматически запросит права Администратора для загрузки сетевого драйвера ядра).
+3. **Готово!** Никаких настроек в браузере, расширений и прокси не требуется. Всё работает сразу во всей системе.
 
 ---
 
-## 🛠 Ключевые технологии обхода ТСПУ
+## 🛠 Сборка из исходников (для разработчиков)
 
-1. **Mid-SNI Extension Splitting**:  
-   В отличие от старого метода сплита на 2 байта (который ТСПУ научился склеивать на многих узлах), UltraDPI режет пакет прямо посреди доменного имени в расширении TLS SNI (`disc` | `ord.com`). Сборщик ТСПУ падает в таймаут, а целевой сервер корректно собирает TLS ClientHello.
-
-2. **Low-TTL Fake Packet Injection (Hop-Limit Spoofing)**:  
-   Отправляет поврежденный фиктивный пакет с `TTL=3..4`. Фильтр ТСПУ провайдера перехватывает фейк и сбрасывает свое внутреннее состояние сессии, а реальный пакет доходит до зарубежного сервера чистым.
-
-3. **Discord & Battlefield Voice Unblocker (UDP Desync)**:  
-   Пакеты голосовой связи и игрового сетевого кода шифруются и префиксируются контрольными evasion-байтами, обходя «черные дыры» UDP-фильтрации операторов.
-
-4. **Zero-Copy SOCKS5 Engine**:  
-   Поддержка подключения как всей системы целиком, так и отдельных приложений (браузер, Discord, Telegram, игры).
-
----
-
-## 📦 Быстрый старт
-
-### 1. Сборка из исходников (Rust)
+Если вы клонируете репозиторий:
 ```bash
 git clone https://github.com/markankamaransheogarat-sys/ultradpi.git
 cd ultradpi
 cargo build --release
 ```
-Бинарник появится в `target/release/ultradpi.exe`.
+Готовый бинарник будет находиться по пути: `target/release/ultradpi.exe` (или сразу в корне репозитория).
 
 ---
 
-## 💻 Использование
+## 🚀 Почему UltraDPI лучше GoodbyeDPI:
 
-### Автокалибровка провайдера (Бенчмарк ТСПУ):
-```bash
-ultradpi benchmark
-```
-*Утилита автоматически протестирует ваш интернет (Ростелеком, МТС, Билайн, Мегафон, Дом.ру) по матрице блокировок и выдаст лучший профиль.*
-
-### Запуск службы обхода (в 1 клик):
-```bash
-# Запуск с авто-режимом Mid-SNI (по умолчанию порт 10808)
-ultradpi
-
-# Запуск с инъекцией Fake SNI и TTL 3:
-ultradpi --mode fakettl
-
-# Запуск для голосовых каналов Discord и игр:
-ultradpi --mode udp
-```
-
----
-
-## 📱 Настройка для мобилок и игр
-
-- **Discord**: В настройках Discord → Настройки приложения → Голос и видео → выберите качество или пустите трафик через SOCKS5 `127.0.0.1:10808`.
-- **Браузер / Windows**: В свойствах сети укажите прокси `127.0.0.1:10808` или используйте расширение SwitchyOmega / FoxyProxy.
-- **Смартфон в той же Wi-Fi сети**: Укажите IP вашего ПК и порт `10808` в свойствах Wi-Fi на Android / iOS.
+| Функция | GoodbyeDPI | ⚡ UltraDPI |
+|---|---|---|
+| **Установка** | Папка с 15 файлами и батниками | **1 самостоятельный .exe со всеми драйверами внутри** |
+| **Discord Voice & RTC (UDP)** | ❌ Постоянные обрывы и RTC Connecting | **✅ Встроенный десинк голосовых UDP-портов 50000–65535** |
+| **Игры (Battlefield, EA Online)** | ❌ Вылеты из матчей | **✅ Bypass игровых UDP/TCP портов (25200–25300 и др.)** |
+| **Нейросети (ChatGPT, Claude AI)** | ⚠️ Ошибки подключения Cloudflare | **✅ Автоматическая TLS/SNI десинхронизация** |
+| **YouTube 4K** | ⚠️ Частые подвисания | **✅ Разблокировка QUIC/HTTP3 + Fake Google ClientHello** |
+| **Настройка браузера** | Требуется отключение Kyber/QUIC | **Ничего отключать не требуется — работает «из коробки»** |
 
 ---
 
