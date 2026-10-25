@@ -1,139 +1,201 @@
-//! UltraDPI CLI & Application Entrypoint
+//! UltraDPI - Production-Grade Native Windows WinDivert System-Wide Kernel Bypass
+//! Directly embeds WinDivert driver, cygwin and winws engine binaries into the single executable.
+//! No proxies, no external configuration, no manual browser setup. 1-click execution.
 
-mod packet;
-mod engine;
-mod calibration;
-mod proxy;
-
-use clap::{Parser, Subcommand};
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use colored::*;
-use engine::DesyncMode;
-use proxy::TransparentProxyServer;
-use calibration::AutoCalibrator;
 
-#[derive(Parser)]
-#[command(name = "ultradpi")]
-#[command(about = "Next-Gen TSPU / DPI Bypass Engine. 5x faster & more powerful than GoodbyeDPI.", long_about = None)]
-#[command(version = "1.0.0")]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Commands>,
+// Embedded binaries directly from Zapret / WinDivert core
+const WINWS_EXE: &[u8] = include_bytes!("../bin/winws.exe");
+const WINDIVERT_DLL: &[u8] = include_bytes!("../bin/WinDivert.dll");
+const WINDIVERT64_SYS: &[u8] = include_bytes!("../bin/WinDivert64.sys");
+const CYGWIN_DLL: &[u8] = include_bytes!("../bin/cygwin1.dll");
 
-    /// Listening port for local bypass proxy
-    #[arg(short, long, default_value_t = 10808)]
-    port: u16,
+// Embedded fake packets
+const FAKE_QUIC_GOOGLE: &[u8] = include_bytes!("../bin/quic_initial_www_google_com.bin");
+const FAKE_QUIC_DBANK: &[u8] = include_bytes!("../bin/quic_initial_dbankcloud_ru.bin");
+const FAKE_TLS_MAX: &[u8] = include_bytes!("../bin/tls_clienthello_max_ru.bin");
 
-    /// Evasion mode: midsni, split2, fakettl, disorder, or auto
-    #[arg(short, long, default_value = "midsni")]
-    mode: String,
+// Embedded hostlists
+const LIST_GENERAL: &str = include_str!("../lists/list-general.txt");
+const LIST_GOOGLE: &str = include_str!("../lists/list-google.txt");
+
+fn is_elevated() -> bool {
+    Command::new("net")
+        .args(["session"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Probe all blocked services and select optimal ISP parameters
-    Benchmark,
-    /// Run high-performance local desync tunnel daemon
-    Run {
-        #[arg(short, long, default_value_t = 10808)]
-        port: u16,
-    },
-}
+fn relaunch_as_admin() {
+    println!("{}", "[!] Запрос прав Администратора для загрузки драйвера перехвата пакетов WinDivert...".yellow());
+    let current_exe = std::env::current_exe().expect("Failed to get current exe path");
+    
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("Start-Process -FilePath '{}' -Verb RunAs", current_exe.to_string_lossy())
+        ])
+        .status();
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let cli = Cli::parse();
-
-    println!("{}", "=======================================================".bright_cyan());
-    println!("{}", "   ⚡ UltraDPI v1.0.0 | Enterprise TSPU Bypass Core    ".bright_white().bold());
-    println!("{}", "   Author: markankamaransheogarat-sys                  ".bright_blue());
-    println!("{}", "=======================================================".bright_cyan());
-
-    match cli.command {
-        Some(Commands::Benchmark) => {
-            println!("{}", "\n[*] Running ISP Calibration Benchmark against TSPU filters...".yellow());
-            let (winner, scores) = AutoCalibrator::run_full_calibration().await;
-
-            println!("\n{}", "--- Calibration Results Matrix ---".bright_green().bold());
-            for (idx, score) in scores.iter().enumerate() {
-                println!(
-                    " {:>2}. {:<40} Passed: {}/{} | Avg Ping: {}ms",
-                    idx + 1,
-                    score.mode_name.bright_white(),
-                    score.passed_count.to_string().bright_green(),
-                    score.total_count,
-                    score.avg_latency_ms
-                );
-            }
-
-            println!("\n{} {:?}", "[★] Optimal Strategy for Current Connection:".bright_yellow().bold(), winner);
-        }
-        Some(Commands::Run { port }) => {
-            start_daemon(port, &cli.mode).await?;
-        }
-        None => {
-            start_daemon(cli.port, &cli.mode).await?;
+    if let Ok(s) = status {
+        if s.success() {
+            std::process::exit(0);
         }
     }
-
-    Ok(())
 }
 
-async fn start_daemon(port: u16, mode_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mode = match mode_str.to_lowercase().as_str() {
-        "split2" => DesyncMode::SplitSni2,
-        "fakettl" => DesyncMode::FakeSniHopLimit { ttl: 3 },
-        "disorder" => DesyncMode::TcpDisorder,
-        "udp" => DesyncMode::UdpVoiceDesync,
-        _ => DesyncMode::MidSniSplit,
+fn unpack_runtime() -> PathBuf {
+    let temp_dir = std::env::temp_dir().join("ultradpi_core");
+    fs::create_dir_all(&temp_dir).expect("Failed to create temporary runtime directory");
+
+    let write_file = |name: &str, bytes: &[u8]| {
+        let p = temp_dir.join(name);
+        if !p.exists() || fs::metadata(&p).map(|m| m.len()).unwrap_or(0) != bytes.len() as u64 {
+            let mut f = fs::File::create(&p).expect(&format!("Failed to write {}", name));
+            f.write_all(bytes).expect(&format!("Failed to write bytes to {}", name));
+        }
     };
 
-    println!("{}", format!("[*] Selected Desync Mode: {:?}", mode).bright_green());
-    println!("{}", format!("[*] Starting UltraDPI Zero-Copy SOCKS5 Engine on port {}...", port).bright_cyan());
-    println!("{}", "[+] Active Targets: YouTube 4K, Discord Voice (UDP/TCP), Claude AI, ChatGPT, Battlefield".bright_white());
+    write_file("winws.exe", WINWS_EXE);
+    write_file("WinDivert.dll", WINDIVERT_DLL);
+    write_file("WinDivert64.sys", WINDIVERT64_SYS);
+    write_file("cygwin1.dll", CYGWIN_DLL);
 
-    let server = TransparentProxyServer::new(port, mode);
-    server.run().await?;
-    Ok(())
+    write_file("quic_initial_www_google_com.bin", FAKE_QUIC_GOOGLE);
+    write_file("quic_initial_dbankcloud_ru.bin", FAKE_QUIC_DBANK);
+    write_file("tls_clienthello_max_ru.bin", FAKE_TLS_MAX);
+
+    let lists_dir = temp_dir.join("lists");
+    fs::create_dir_all(&lists_dir).expect("Failed to create lists dir");
+
+    let list_gen_path = lists_dir.join("list-general.txt");
+    if !list_gen_path.exists() {
+        fs::write(&list_gen_path, LIST_GENERAL).expect("Failed to write general list");
+    }
+
+    let list_goog_path = lists_dir.join("list-google.txt");
+    if !list_goog_path.exists() {
+        fs::write(&list_goog_path, LIST_GOOGLE).expect("Failed to write google list");
+    }
+
+    temp_dir
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use packet::PacketParser;
-    use engine::{DesyncEngine, DesyncMode};
+fn main() {
+    println!("{}", "======================================================================".bright_cyan());
+    println!("{}", "   ⚡ UltraDPI v1.0.0 | Native System-Wide TSPU / DPI Bypass Engine   ".bright_white().bold());
+    println!("{}", "   Автоматический системный обход блокировок ТСПУ РКН без прокси      ".bright_green());
+    println!("{}", "   Author: markankamaransheogarat-sys                                 ".bright_blue());
+    println!("{}", "======================================================================".bright_cyan());
+    println!();
 
-    #[test]
-    fn test_client_hello_parser() {
-        let fake_hello = AutoCalibrator::build_client_hello("discord.com");
-        let (is_tls, sni) = PacketParser::detect_tls_client_hello(&fake_hello);
-        assert!(is_tls, "Should detect TLS handshake");
-        assert_eq!(sni, Some("discord.com".to_string()), "Should extract SNI domain");
+    if !is_elevated() {
+        relaunch_as_admin();
+        return;
     }
 
-    #[test]
-    fn test_mid_sni_split() {
-        let fake_hello = AutoCalibrator::build_client_hello("googlevideo.com");
-        let engine = DesyncEngine::new(DesyncMode::MidSniSplit);
-        let res = engine.desync_tcp(&fake_hello);
-        assert_eq!(res.chunks.len(), 2, "MidSniSplit should yield 2 chunks");
-        assert!(res.chunks[0].len() > 10, "First chunk should cut into SNI extension");
-    }
+    println!("{}", "[✓] Права Администратора подтверждены.".green());
+    println!("{}", "[*] Распаковка системного драйвера WinDivert и движка в оперативную память...".cyan());
+    
+    let runtime_dir = unpack_runtime();
+    let winws_path = runtime_dir.join("winws.exe");
+    let lists_dir = runtime_dir.join("lists");
 
-    #[test]
-    fn test_fake_packet_injection() {
-        let fake_hello = AutoCalibrator::build_client_hello("chatgpt.com");
-        let engine = DesyncEngine::new(DesyncMode::FakeSniHopLimit { ttl: 3 });
-        let res = engine.desync_tcp(&fake_hello);
-        assert_eq!(res.chunks.len(), 3, "FakeSniHopLimit should produce 3 chunks");
-        assert!(res.is_fake[0], "First chunk must be flagged as fake packet");
-        assert_eq!(res.custom_ttl, Some(3), "Custom TTL must be 3");
-    }
+    let list_gen = lists_dir.join("list-general.txt");
+    let list_goog = lists_dir.join("list-google.txt");
+    let quic_google = runtime_dir.join("quic_initial_www_google_com.bin");
+    let quic_dbank = runtime_dir.join("quic_initial_dbankcloud_ru.bin");
+    let tls_fake_max = runtime_dir.join("tls_clienthello_max_ru.bin");
 
-    #[test]
-    fn test_udp_voice_desync() {
-        let engine = DesyncEngine::new(DesyncMode::UdpVoiceDesync);
-        let sample_voice_payload = vec![0x80, 0x78, 0x12, 0x34, 0x00, 0x00, 0x00, 0x01, 0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb];
-        let chunks = engine.desync_udp(&sample_voice_payload);
-        assert_eq!(chunks.len(), 2, "UDP voice should inject prefix evasion chunk");
-    }
+    println!("{}", "[*] Инициализация сетевого фильтра WinDivert для всех интерфейсов...".cyan());
+    println!("{}", "[+] АКТИВНЫЕ ЦЕЛИ:".bright_white().bold());
+    println!("{}", "    • YouTube: 4K без буферизации (QUIC + TLS десинхронизация)".bright_green());
+    println!("{}", "    • Discord: Голосовые каналы (UDP RTC 50000-65535) + Медиашлюзы".bright_green());
+    println!("{}", "    • Игры: Battlefield, EA Online, Steam (TCP/UDP bypass)".bright_green());
+    println!("{}", "    • Нейросети & Сервисы: ChatGPT, Claude, Instagram, Rutracker".bright_green());
+    println!();
+    println!("{}", ">>> ОБХОД АКТИВЕН. Не закрывайте это окно во время работы в интернете <<<".bright_yellow().bold());
+    println!("{}", "Нажмите Ctrl+C для остановки обхода.".white());
+    println!();
+
+    // Launch winws directly under the current console process
+    let mut child: Child = Command::new(&winws_path)
+        .current_dir(&runtime_dir)
+        .args([
+            "--wf-tcp=80,443,2053,2083,2087,2096,8443,25200-25300",
+            "--wf-udp=443,19294-19344,50000-65535",
+            "--filter-udp=443",
+            &format!("--hostlist={}", list_gen.display()),
+            "--dpi-desync=fake",
+            "--dpi-desync-repeats=11",
+            &format!("--dpi-desync-fake-quic={}", quic_google.display()),
+            "--new",
+            "--filter-udp=19294-19344,50000-65535",
+            "--filter-l7=discord,stun",
+            "--dpi-desync=fake",
+            &format!("--dpi-desync-fake-discord={}", quic_dbank.display()),
+            &format!("--dpi-desync-fake-stun={}", quic_dbank.display()),
+            "--dpi-desync-repeats=6",
+            "--new",
+            "--filter-tcp=2053,2083,2087,2096,8443",
+            "--hostlist-domains=discord.media",
+            "--dpi-desync=fake,multidisorder",
+            "--dpi-desync-split-pos=1,midsld",
+            "--dpi-desync-repeats=11",
+            "--dpi-desync-fooling=badseq",
+            "--dpi-desync-fake-tls=0x00000000",
+            "--dpi-desync-fake-tls=!",
+            "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com",
+            "--new",
+            "--filter-tcp=443",
+            &format!("--hostlist={}", list_goog.display()),
+            "--ip-id=zero",
+            "--dpi-desync=fake,multidisorder",
+            "--dpi-desync-split-pos=1,midsld",
+            "--dpi-desync-repeats=11",
+            "--dpi-desync-fooling=badseq",
+            "--dpi-desync-fake-tls=0x00000000",
+            "--dpi-desync-fake-tls=!",
+            "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com",
+            "--new",
+            "--filter-tcp=80,443",
+            &format!("--hostlist={}", list_gen.display()),
+            "--dpi-desync=fake,multidisorder",
+            "--dpi-desync-split-pos=1,midsld",
+            "--dpi-desync-repeats=11",
+            "--dpi-desync-fooling=badseq",
+            "--dpi-desync-fake-tls=0x00000000",
+            "--dpi-desync-fake-tls=!",
+            "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com",
+            &format!("--dpi-desync-fake-http={}", tls_fake_max.display()),
+            "--new",
+            "--filter-tcp=80,443,8443,25200-25300",
+            "--dpi-desync=fake,multidisorder",
+            "--dpi-desync-any-protocol=1",
+            "--dpi-desync-cutoff=n4",
+            "--dpi-desync-split-pos=1,midsld",
+            "--dpi-desync-repeats=11",
+            "--dpi-desync-fooling=badseq",
+            "--dpi-desync-fake-tls=0x00000000",
+            "--dpi-desync-fake-tls=!",
+            "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com",
+            &format!("--dpi-desync-fake-http={}", tls_fake_max.display()),
+            "--new",
+            "--filter-udp=50000-65535,25200-25300",
+            "--dpi-desync=fake",
+            "--dpi-desync-repeats=10",
+            "--dpi-desync-any-protocol=1",
+            &format!("--dpi-desync-fake-unknown-udp={}", quic_dbank.display()),
+            "--dpi-desync-cutoff=n2"
+        ])
+        .spawn()
+        .expect("Failed to start WinDivert bypass core process");
+
+    let _ = child.wait();
 }
