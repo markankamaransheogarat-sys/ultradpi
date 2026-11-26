@@ -2,11 +2,11 @@
 //! Directly embeds WinDivert driver, cygwin and winws engine binaries into the single executable.
 //! No proxies, no external configuration, no manual browser setup. 1-click execution.
 
+use colored::*;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command};
-use colored::*;
 
 // Embedded binaries directly from Zapret / WinDivert core
 const WINWS_EXE: &[u8] = include_bytes!("../bin/winws.exe");
@@ -32,21 +32,26 @@ fn is_elevated() -> bool {
 }
 
 fn relaunch_as_admin() {
-    println!("{}", "[!] Запрос прав Администратора для загрузки драйвера перехвата пакетов WinDivert...".yellow());
+    println!(
+        "{}",
+        "[!] Запрос прав Администратора для загрузки драйвера перехвата пакетов WinDivert..."
+            .yellow()
+    );
     let current_exe = std::env::current_exe().expect("Failed to get current exe path");
-    
+
     let status = Command::new("powershell")
         .args([
             "-NoProfile",
             "-Command",
-            &format!("Start-Process -FilePath '{}' -Verb RunAs", current_exe.to_string_lossy())
+            &format!(
+                "Start-Process -FilePath '{}' -Verb RunAs",
+                current_exe.to_string_lossy()
+            ),
         ])
         .status();
 
-    if let Ok(s) = status {
-        if s.success() {
-            std::process::exit(0);
-        }
+    if status.is_ok_and(|s| s.success()) {
+        std::process::exit(0);
     }
 }
 
@@ -57,8 +62,10 @@ fn unpack_runtime() -> PathBuf {
     let write_file = |name: &str, bytes: &[u8]| {
         let p = temp_dir.join(name);
         if !p.exists() || fs::metadata(&p).map(|m| m.len()).unwrap_or(0) != bytes.len() as u64 {
-            let mut f = fs::File::create(&p).expect(&format!("Failed to write {}", name));
-            f.write_all(bytes).expect(&format!("Failed to write bytes to {}", name));
+            let mut f =
+                fs::File::create(&p).unwrap_or_else(|e| panic!("Failed to write {}: {}", name, e));
+            f.write_all(bytes)
+                .unwrap_or_else(|e| panic!("Failed to write bytes to {}: {}", name, e));
         }
     };
 
@@ -88,11 +95,28 @@ fn unpack_runtime() -> PathBuf {
 }
 
 fn main() {
-    println!("{}", "======================================================================".bright_cyan());
-    println!("{}", "   ⚡ UltraDPI v1.0.0 | Native System-Wide TSPU / DPI Bypass Engine   ".bright_white().bold());
-    println!("{}", "   Автоматический системный обход блокировок ТСПУ РКН без прокси      ".bright_green());
-    println!("{}", "   Author: markankamaransheogarat-sys                                 ".bright_blue());
-    println!("{}", "======================================================================".bright_cyan());
+    println!(
+        "{}",
+        "======================================================================".bright_cyan()
+    );
+    println!(
+        "{}",
+        "   ⚡ UltraDPI v1.0.0 | Native System-Wide TSPU / DPI Bypass Engine   "
+            .bright_white()
+            .bold()
+    );
+    println!(
+        "{}",
+        "   Автоматический системный обход блокировок ТСПУ РКН без прокси      ".bright_green()
+    );
+    println!(
+        "{}",
+        "   Author: markankamaransheogarat-sys                                 ".bright_blue()
+    );
+    println!(
+        "{}",
+        "======================================================================".bright_cyan()
+    );
     println!();
 
     if !is_elevated() {
@@ -101,8 +125,11 @@ fn main() {
     }
 
     println!("{}", "[✓] Права Администратора подтверждены.".green());
-    println!("{}", "[*] Распаковка системного драйвера WinDivert и движка в оперативную память...".cyan());
-    
+    println!(
+        "{}",
+        "[*] Распаковка системного драйвера WinDivert и движка в оперативную память...".cyan()
+    );
+
     let runtime_dir = unpack_runtime();
     let winws_path = runtime_dir.join("winws.exe");
     let lists_dir = runtime_dir.join("lists");
@@ -113,14 +140,34 @@ fn main() {
     let quic_dbank = runtime_dir.join("quic_initial_dbankcloud_ru.bin");
     let tls_fake_max = runtime_dir.join("tls_clienthello_max_ru.bin");
 
-    println!("{}", "[*] Инициализация сетевого фильтра WinDivert для всех интерфейсов...".cyan());
+    println!(
+        "{}",
+        "[*] Инициализация сетевого фильтра WinDivert для всех интерфейсов...".cyan()
+    );
     println!("{}", "[+] АКТИВНЫЕ ЦЕЛИ:".bright_white().bold());
-    println!("{}", "    • YouTube: 4K без буферизации (QUIC + TLS десинхронизация)".bright_green());
-    println!("{}", "    • Discord: Голосовые каналы (UDP RTC 50000-65535) + Медиашлюзы".bright_green());
-    println!("{}", "    • Игры: Battlefield, EA Online, Steam (TCP/UDP bypass)".bright_green());
-    println!("{}", "    • Нейросети & Сервисы: ChatGPT, Claude, Instagram, Rutracker".bright_green());
+    println!(
+        "{}",
+        "    • YouTube: 4K без буферизации (QUIC + TLS десинхронизация)".bright_green()
+    );
+    println!(
+        "{}",
+        "    • Discord: Голосовые каналы (UDP RTC 50000-65535) + Медиашлюзы".bright_green()
+    );
+    println!(
+        "{}",
+        "    • Игры: Battlefield, EA Online, Steam (TCP/UDP bypass)".bright_green()
+    );
+    println!(
+        "{}",
+        "    • Нейросети & Сервисы: ChatGPT, Claude, Instagram, Rutracker".bright_green()
+    );
     println!();
-    println!("{}", ">>> ОБХОД АКТИВЕН. Не закрывайте это окно во время работы в интернете <<<".bright_yellow().bold());
+    println!(
+        "{}",
+        ">>> ОБХОД АКТИВЕН. Не закрывайте это окно во время работы в интернете <<<"
+            .bright_yellow()
+            .bold()
+    );
     println!("{}", "Нажмите Ctrl+C для остановки обхода.".white());
     println!();
 
@@ -192,7 +239,7 @@ fn main() {
             "--dpi-desync-repeats=10",
             "--dpi-desync-any-protocol=1",
             &format!("--dpi-desync-fake-unknown-udp={}", quic_dbank.display()),
-            "--dpi-desync-cutoff=n2"
+            "--dpi-desync-cutoff=n2",
         ])
         .spawn()
         .expect("Failed to start WinDivert bypass core process");
